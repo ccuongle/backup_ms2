@@ -1,0 +1,7 @@
+pika
+python-dotenv
+pytest-testcontainers
+pytest
+pytest-mock
+google-generativeai
+PyYAML
