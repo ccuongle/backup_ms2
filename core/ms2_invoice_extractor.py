@@ -3,6 +3,7 @@ import json
 import xmltodict
 from utils.config import ATTACH_DIR, load_extraction_prompt, get_model
 from pypdf import PdfReader
+from ms2_extractor.utils.rabbitmq import RabbitMQConnection
 
 # Ưu tiên trích xuất XML:
 def _load_xml_content(email_id: str):
@@ -155,22 +156,60 @@ def map_invoice(file_content: str) -> dict:
     return extractedInvoice
 
 
+def publish_invoice_data(invoice_data: dict):
+    """Serializes and publishes invoice data to RabbitMQ."""
+    if not invoice_data:
+        print("[ms2_publisher]: No invoice data to publish.")
+        return
+
+    rmq = None
+    try:
+        print("[ms2_publisher]: Initializing RabbitMQ connection...")
+        rmq = RabbitMQConnection()
+        rmq.connect()
+
+        message_body = json.dumps(invoice_data, ensure_ascii=False)
+        
+        print("[ms2_publisher]: Publishing message to exchange 'invoice_exchange' with routing key 'queue.for_persistence'...")
+        rmq.publish(
+            exchange='invoice_exchange',
+            routing_key='queue.for_persistence',
+            body=message_body
+        )
+        print("[ms2_publisher]: Message published successfully.")
+
+    except Exception as e:
+        print(f"[ms2_publisher]: Failed to publish message to RabbitMQ: {e}")
+        # Optionally, re-raise the exception if the caller needs to handle it
+        # raise
+    finally:
+        if rmq:
+            rmq.close()
+
+
 def extract_invoice_data(email_id: str):
     """Hàm điều phối trích xuất chung (XML, PDF, etc.)"""
     if not isinstance(email_id, str) or not email_id:
         raise ValueError(f"[ms3_invoiceExtraction]: Invalid email_id: {email_id}")
     
+    extracted_data = None
     # 1. Thử trích xuất XML trước
     xml_content = _load_xml_content(email_id)
     if xml_content:
-        return map_invoice(xml_content)
+        extracted_data = map_invoice(xml_content)
     # 2. Tìm PDF nếu không có XML
-    if not xml_content:
+    else:
         print(f"[ms3_invoiceExtraction]: No valid XML content found for {email_id}, trying PDF...")
         pdf_path = os.path.join(ATTACH_DIR, f"{email_id}.pdf")
         if os.path.exists(pdf_path):
-            return _pdf_extraction_logic(pdf_path) 
+            extracted_data = _pdf_extraction_logic(pdf_path)
         else:
             print(f"[ms3_invoiceExtraction]: No valid PDF attachment found for {email_id}")
-    print(f"[ms3_invoiceExtraction]: Extraction failed for {email_id}")
-    return None
+
+    if extracted_data:
+        # Publish the extracted data to RabbitMQ
+        publish_invoice_data(extracted_data)
+    else:
+        print(f"[ms3_invoiceExtraction]: Extraction failed for {email_id}")
+
+    return extracted_data

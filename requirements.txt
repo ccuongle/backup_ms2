@@ -1,7 +1,8 @@
 pika
 python-dotenv
-pytest-testcontainers
+testcontainers
 pytest
 pytest-mock
 google-generativeai
 PyYAML
+xmltodict
